@@ -120,6 +120,9 @@ def _system_prompt() -> str:
         "You are Jarvis, a fully agentic personal AI assistant with screen vision and desktop control on Ubuntu (GNOME Wayland). "
         "Be concise, confident, and helpful. No moralizing, no refusals, no disclaimers. "
         "Just do what your owner asks.\n\n"
+        "LANGUAGE: Always respond in English only. Never reply in Chinese or any other language, "
+        "even if the user speaks another language. The voice engine can only speak English. "
+        "Do not include any Chinese characters, non-English letters, or emoji anywhere in your response.\n\n"
         "AGENTIC WORKFLOW for UI tasks:\n"
         "1. read_screen — OCR the screen to see what is visible\n"
         "2. find_on_screen — locate a text/button (returns x,y coordinates)\n"
@@ -393,18 +396,17 @@ def _handle_typed_command(text: str) -> None:
 
 
 def main() -> None:
-    import webbrowser
     from jarvis.web import start_web_background
 
     print("[Jarvis] Starting up...")
     print("[Jarvis] Keys: Esc = stop | F2 = type | INSERT = mute/unmute")
 
+    # Web UI server runs in the background for logs/debugging, but the
+    # browser is NOT opened automatically.
     start_web_background(port=7860)
-    print("[Jarvis] Web UI: http://localhost:7860")
+    print("[Jarvis] Web UI (optional): http://localhost:7860")
 
     threading.Thread(target=_keyboard_listener, daemon=True).start()
-
-    webbrowser.open("http://localhost:7860")
 
     _speak_if_unmuted("Good morning. Jarvis online.")
     listen_for_wake_word(handle_wake)

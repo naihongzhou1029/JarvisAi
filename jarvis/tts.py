@@ -57,6 +57,23 @@ def _get_voice():
     return _voice_tensor
 
 
+def _sanitize_for_english_tts(text: str) -> str:
+    """Strip anything the English Kokoro voice cannot pronounce.
+
+    NFKD-normalize then keep ASCII: accented letters fold to their base
+    (cafe), while CJK characters, emoji and other symbols are dropped
+    (otherwise Kokoro spells them out one by one). Returns "" if nothing
+    speakable remains.
+    """
+    import unicodedata
+    ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    cleaned = re.sub(r"\s+", " ", ascii_text).strip()
+    return re.sub(r"^[^A-Za-z0-9]+", "", cleaned)
+
+
+_FALLBACK_ENGLISH = "Sorry, I can only speak English."
+
+
 def _split_sentences(text: str) -> list[str]:
     """Split text into sentences for streaming TTS."""
     parts = re.split(r'(?<=[.!?])\s+', text)
@@ -65,8 +82,7 @@ def _split_sentences(text: str) -> list[str]:
 
 def speak_to_bytes(text: str) -> bytes:
     """Convert text to PCM audio bytes using Kokoro TTS."""
-    if not text or not text.strip():
-        raise ValueError("Text cannot be empty")
+    text = _sanitize_for_english_tts(text) or _FALLBACK_ENGLISH
     pipeline = _get_pipeline()
     voice = _get_voice()
     cfg = _load_config()
@@ -121,6 +137,7 @@ def speak_streamed(text: str) -> None:
     """Speak text sentence by sentence — starts playing before full generation is done.
     Can be interrupted mid-stream via stop_speaking()."""
     _interrupt.clear()
+    text = _sanitize_for_english_tts(text) or _FALLBACK_ENGLISH
     sentences = _split_sentences(text)
     if not sentences:
         return

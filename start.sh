@@ -32,4 +32,21 @@ if command -v ydotoold >/dev/null 2>&1; then
     fi
 fi
 
-exec .venv/bin/python -m jarvis.main
+# CUDA libraries shipped inside the venv (ctranslate2 dlopens libcudnn/libcublas
+# by soname, so they must be on the loader path).
+export LD_LIBRARY_PATH="$PWD/.venv/lib/python3.11/site-packages/nvidia/cudnn/lib:$PWD/.venv/lib/python3.11/site-packages/nvidia/cublas/lib:$PWD/.venv/lib/python3.11/site-packages/nvidia/cuda_runtime/lib:$PWD/.venv/lib/python3.11/site-packages/nvidia/cufft/lib:$PWD/.venv/lib/python3.11/site-packages/nvidia/curand/lib:$PWD/.venv/lib/python3.11/site-packages/nvidia/cusolver/lib:$PWD/.venv/lib/python3.11/site-packages/nvidia/cusparse/lib:${LD_LIBRARY_PATH:-}"
+
+PIDFILE="/tmp/jarvis.pid"
+LOGFILE="/tmp/jarvis.log"
+
+# Already running? Don't start a second copy.
+if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+    echo "Jarvis is already running (pid $(cat "$PIDFILE")). Use ./stop.sh first." >&2
+    exit 1
+fi
+rm -f "$PIDFILE"
+
+nohup .venv/bin/python -u -m jarvis.main >>"$LOGFILE" 2>&1 &
+echo $! > "$PIDFILE"
+echo "[start] Jarvis running in background (pid $!, log $LOGFILE)."
+echo "[start] Say 'Hey Jarvis', or stop it with ./stop.sh"

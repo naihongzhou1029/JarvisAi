@@ -42,7 +42,7 @@ def transcribe_audio(audio: np.ndarray) -> str:
     """Transcribe a float32 numpy audio array (16kHz mono) to text."""
     try:
         model = _get_model()
-        segments, _ = model.transcribe(audio, beam_size=5, language="en")
+        segments, _ = model.transcribe(audio, beam_size=5)
         return " ".join(seg.text.strip() for seg in segments).strip()
     except Exception as e:
         # If CUDA worked for loading but fails during inference, retry on CPU
@@ -50,7 +50,7 @@ def transcribe_audio(audio: np.ndarray) -> str:
             print(f"[STT] {_model_device} transcription failed ({e}), reloading on CPU")
             try:
                 model = _get_model(force_cpu=True)
-                segments, _ = model.transcribe(audio, beam_size=5, language="en")
+                segments, _ = model.transcribe(audio, beam_size=5)
                 return " ".join(seg.text.strip() for seg in segments).strip()
             except Exception as e2:
                 print(f"[STT] CPU transcription also failed: {e2}")
@@ -68,20 +68,26 @@ def set_abort_event(event) -> None:
 
 def record_until_silence(
     sample_rate: int = 16000,
-    silence_threshold: float = 0.012,
-    max_seconds: int = 30,
+    max_seconds: int = 12,
+    no_speech_timeout: float = 6.0,
 ) -> np.ndarray:
     """Record microphone audio until silence is detected. Returns float32 array.
     Waits for speech to start before counting silence.
+    Stops early if nobody speaks within no_speech_timeout seconds.
     Can be interrupted via the abort event (Esc key)."""
     import sounddevice as sd
 
     chunk = int(sample_rate * 0.3)  # 300ms chunks
     recording = []
     silent_chunks = 0
-    silent_chunks_needed = 7  # ~2.1s of silence to stop
+    silent_chunks_needed = 5  # ~1.5s of silence to stop
     heard_speech = False
-    speech_threshold = 0.015  # louder than silence — confirms user is talking
+    # Calibrated 2026-10-06: ambient floor mean=0.043/max=0.055, speech ~= 0.16.
+    # Thresholds must sit ABOVE the floor, otherwise silence is never detected.
+    speech_threshold = 0.09
+    silence_threshold = 0.07
+    warmup_chunks = 2  # ignore first ~0.6s (TTS "Yes?" speaker echo decay)
+    peak_rms = 0.0
 
     with sd.InputStream(samplerate=sample_rate, channels=1, dtype="float32") as stream:
         while True:
@@ -94,6 +100,10 @@ def record_until_silence(
             flat = data.flatten()
             recording.append(flat)
             rms = float(np.sqrt(np.mean(flat ** 2)))
+            peak_rms = max(peak_rms, rms)
+
+            if len(recording) <= warmup_chunks:
+                continue  # let the "Yes?" echo decay before detecting speech
 
             if rms >= speech_threshold:
                 if not heard_speech:
@@ -106,10 +116,15 @@ def record_until_silence(
             if heard_speech and silent_chunks >= silent_chunks_needed:
                 print("[STT] Silence detected, stopping recording.")
                 break
-            if len(recording) * chunk >= max_seconds * sample_rate:
+            recorded_seconds = len(recording) * chunk / sample_rate
+            if not heard_speech and recorded_seconds >= no_speech_timeout:
+                print(f"[STT] No speech heard within {no_speech_timeout:.0f}s, stopping.")
+                break
+            if recorded_seconds >= max_seconds:
                 print(f"[STT] Max recording time reached ({max_seconds}s)")
                 break
 
     if not recording:
         return np.zeros(chunk, dtype=np.float32)
+    print(f"[STT] Stopped. peak rms={peak_rms:.4f}")
     return np.concatenate(recording)
