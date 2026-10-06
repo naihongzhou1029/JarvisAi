@@ -120,68 +120,84 @@ def _overlay_thread_main() -> None:
     except Exception:
         pass
 
-    canvas = tk.Canvas(
-        root,
-        width=_WIDTH,
-        height=_HEIGHT,
-        bg="#0b0f1a",
-        highlightthickness=0,
-        bd=0,
-    )
-    canvas.pack(fill="both", expand=True)
-
-    label_id = canvas.create_text(
-        _WIDTH // 2, 22,
-        text="Listening…",
-        fill="#e2e8f0",
-        font=("Sans", 12, "bold"),
-    )
+    canvas = None
     bars: list[int] = []
-    for i in range(_BAR_COUNT):
-        color = _BAR_COLORS[i % len(_BAR_COLORS)]
-        bar = canvas.create_rectangle(0, 0, 0, 0, fill=color, outline="")
-        bars.append(bar)
-
+    label_id = None
+    visible_now = False
     t0 = time.monotonic()
-    closed = False
+
+    def _make_widgets() -> bool:
+        nonlocal canvas, bars, label_id
+        try:
+            if canvas is None:
+                canvas = tk.Canvas(
+                    root,
+                    width=_WIDTH,
+                    height=_HEIGHT,
+                    bg="#0b0f1a",
+                    highlightthickness=0,
+                    bd=0,
+                )
+                canvas.pack(fill="both", expand=True)
+            label_id = canvas.create_text(
+                _WIDTH // 2, 22,
+                text="Listening…",
+                fill="#e2e8f0",
+                font=("Sans", 12, "bold"),
+            )
+            bars = []
+            for i in range(_BAR_COUNT):
+                color = _BAR_COLORS[i % len(_BAR_COLORS)]
+                bar = canvas.create_rectangle(0, 0, 0, 0, fill=color, outline="")
+                bars.append(bar)
+            return True
+        except Exception:
+            return False
 
     def _tick() -> None:
-        nonlocal closed
-        if closed:
-            return
-        # External hide request, or a show() from an older cycle → close.
-        if _hide_event.is_set() or not _show_event.is_set():
-            closed = True
+        nonlocal visible_now
+        if _hide_event.is_set() and visible_now:
+            visible_now = False
+            _visible.clear()
             try:
-                root.destroy()
+                root.withdraw()
             except Exception:
                 pass
-            _visible.clear()
-            return
-        t = time.monotonic() - t0
-        mid_y = 72
-        slot = (_WIDTH - 32) / _BAR_COUNT
-        for i, bar in enumerate(bars):
-            # Travelling sine gives the flowing Siri-wave feel.
-            phase = t * 4.0 - i * 0.55
-            amp = 8 + 22 * (0.5 + 0.5 * math.sin(phase))
-            amp *= 0.75 + 0.25 * math.sin(t * 1.7 + i * 0.2)
-            x0 = 16 + i * slot + 1.5
-            x1 = 16 + (i + 1) * slot - 1.5
-            canvas.coords(bar, x0, mid_y - amp / 2, x1, mid_y + amp / 2)
-        # Gentle label pulse.
-        try:
-            dots = "." * (1 + int(t * 2) % 3)
-            canvas.itemconfig(label_id, text=f"Listening{dots}")
-        except Exception:
-            pass
+        if _show_event.is_set():
+            if not visible_now:
+                if _make_widgets():
+                    visible_now = True
+                    _visible.set()
+                    try:
+                        root.deiconify()
+                        root.lift()
+                    except Exception:
+                        pass
+            if visible_now and canvas is not None:
+                t = time.monotonic() - t0
+                mid_y = 72
+                slot = (_WIDTH - 32) / _BAR_COUNT
+                for i, bar in enumerate(bars):
+                    phase = t * 4.0 - i * 0.55
+                    amp = 8 + 22 * (0.5 + 0.5 * math.sin(phase))
+                    amp *= 0.75 + 0.25 * math.sin(t * 1.7 + i * 0.2)
+                    x0 = 16 + i * slot + 1.5
+                    x1 = 16 + (i + 1) * slot - 1.5
+                    canvas.coords(bar, x0, mid_y - amp / 2, x1, mid_y + amp / 2)
+                try:
+                    dots = "." * (1 + int(t * 2) % 3)
+                    canvas.itemconfig(label_id, text=f"Listening{dots}")
+                except Exception:
+                    pass
+        # Keep the interpreter alive; never destroy Tk mid-session.
         try:
             root.after(33, _tick)
         except Exception:
             pass
 
-    _visible.set()
+    # Start hidden; show()/hide() only withdraw/deiconify the same window.
     try:
+        root.withdraw()
         root.after(33, _tick)
         root.mainloop()
     except Exception:
