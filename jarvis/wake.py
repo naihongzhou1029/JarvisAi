@@ -41,42 +41,41 @@ def listen_for_wake_word(callback) -> None:
     Short cooldown after normal wake prevents "Yes?" echo from re-triggering.
     Mic is paused/resumed via pause_wake_mic()/resume_wake_mic() during STT.
     """
-    import pyaudio
+    import sounddevice as sd
     from openwakeword.model import Model
 
     cfg = _load_config()["wake_word"]
     oww = Model(wakeword_models=[cfg["model"]], inference_framework="onnx")
 
-    audio = pyaudio.PyAudio()
-    mic = audio.open(
-        format=pyaudio.paInt16,
-        channels=1,
-        rate=16000,
-        input=True,
-        frames_per_buffer=cfg["chunk_size"],
-    )
-
     _busy = threading.Lock()
     _ignore_until = [0.0]
 
     print("[Jarvis] Listening for wake word...")
+    stream = sd.RawInputStream(
+        samplerate=16000,
+        blocksize=cfg["chunk_size"],
+        channels=1,
+        dtype="int16",
+    )
+    stream.start()
     try:
         while True:
             # ── Mic pause: STT is recording, yield the hardware ──
             if _mic_pause.is_set():
-                if mic.is_active():
-                    mic.stop_stream()
+                if stream.active:
+                    stream.stop()
                     print("[Wake] Mic paused for STT recording.")
                 while _mic_pause.is_set():
                     time.sleep(0.05)
                 # Resume after STT is done
-                mic.start_stream()
+                stream.start()
                 oww.reset()  # Clear stale predictions
                 print("[Wake] Mic resumed.")
                 continue
 
             try:
-                pcm = np.frombuffer(mic.read(cfg["chunk_size"]), dtype=np.int16)
+                pcm_bytes, _ = stream.read(cfg["chunk_size"])
+                pcm = np.frombuffer(pcm_bytes, dtype=np.int16)
             except Exception:
                 time.sleep(0.05)
                 continue
@@ -111,6 +110,8 @@ def listen_for_wake_word(callback) -> None:
                 t = threading.Thread(target=_run, daemon=True)
                 t.start()
     finally:
-        mic.stop_stream()
-        mic.close()
-        audio.terminate()
+        try:
+            stream.stop()
+            stream.close()
+        except Exception:
+            pass

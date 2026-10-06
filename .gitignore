@@ -1,12 +1,22 @@
+# Python
 __pycache__/
 *.pyc
-jarvis/data/
-.env
 *.egg-info/
+build/
 dist/
-.pytest_cache/
-.venv/
-.claude/
 
+# Virtual environment
+.venv/
+
+# Secrets & local config
+.env
+config.local.yaml
+
+# Runtime data (memory DB, chroma, captures)
+jarvis/data/
 *.log
 *.wav
+
+# Tooling / editors
+.pytest_cache/
+.claude/

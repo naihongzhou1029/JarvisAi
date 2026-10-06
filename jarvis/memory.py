@@ -1,12 +1,63 @@
 from __future__ import annotations
 import hashlib
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
 import chromadb
+from chromadb.api.types import EmbeddingFunction, Documents, Embeddings
 from sqlalchemy import create_engine, text
 
 _CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
+
+
+class LexicalEmbedding(EmbeddingFunction[Documents]):
+    """Offline, deterministic embedding: hashed bag-of-words with stopword
+    removal. Avoids downloading Chroma's default ONNX model (which stalls
+    startup on slow networks) while still supporting keyword-style recall."""
+
+    DIM = 512
+    _STOP = {
+        "the", "a", "an", "is", "are", "was", "were", "be", "to", "of", "and",
+        "or", "in", "on", "for", "that", "this", "it", "i", "you", "my", "your",
+        "me", "what", "whats", "who", "how", "when", "where", "why", "do", "does",
+        "did", "with", "about", "he", "she", "we", "they", "am", "so", "if",
+        "then", "than", "too", "can", "will", "just",
+    }
+
+    def __call__(self, input: Documents) -> Embeddings:
+        return [self._embed(d) for d in input]
+
+    @staticmethod
+    def name() -> str:
+        return "jarvis.lexical"
+
+    def get_config(self) -> dict:
+        return {"dim": self.DIM}
+
+    @classmethod
+    def build_from_config(cls, config: dict) -> "LexicalEmbedding":
+        return cls()
+
+    def __init__(self) -> None:
+        self._dim = self.DIM
+
+    def _embed(self, text: str) -> list[float]:
+        v = np.zeros(self.DIM, dtype=np.float32)
+        toks = re.findall(r"[a-z0-9\u4e00-\u9fff]+", (text or "").lower())
+        content = [t for t in toks if t not in self._STOP and len(t) > 1]
+        if not content:
+            content = toks
+        for t in content:
+            h = hashlib.blake2b(t.encode("utf-8"), digest_size=8).digest()
+            idx = int.from_bytes(h[:4], "little") % self.DIM
+            sign = 1.0 if (h[4] & 1) else -1.0
+            v[idx] += sign
+        n = float(np.linalg.norm(v))
+        if n:
+            v /= n
+        return v.tolist()
 
 
 def _resolve_path(raw: str) -> Path:
@@ -49,7 +100,16 @@ class Memory:
 
         self._engine = create_engine(f"sqlite:///{db_path}")
         self._chroma = chromadb.PersistentClient(path=chroma_path)
-        self._facts = self._chroma.get_or_create_collection("facts")
+        emb = LexicalEmbedding()
+        try:
+            self._facts = self._chroma.get_or_create_collection("facts", embedding_function=emb)
+        except Exception:
+            # Collection may already exist with different stored config; drop and recreate.
+            try:
+                self._chroma.delete_collection("facts")
+            except Exception:
+                pass
+            self._facts = self._chroma.get_or_create_collection("facts", embedding_function=emb)
         self._setup_db()
 
     def _setup_db(self) -> None:

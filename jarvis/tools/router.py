@@ -90,7 +90,7 @@ TOOL_SCHEMAS = [
     # --- Apps & processes ---
     {"type": "function", "function": {
         "name": "open_app",
-        "description": "Open app by name: chrome, firefox, edge, brave, discord, telegram, slack, teams, zoom, vscode, terminal, cmd, powershell, git bash, spotify, vlc, steam, epic games, notepad, notepad++, word, excel, powerpoint, paint, snipping tool, explorer, task manager, calculator, settings, control panel.",
+        "description": "Open app by name: chrome, firefox, chromium, vscode, terminal, spotify, vlc, mpv, steam, gedit, calculator, files, settings, discord, telegram, slack, zoom.",
         "parameters": {"type": "object", "properties": {
             "name": {"type": "string"}}, "required": ["name"]}}},
 
@@ -250,7 +250,7 @@ TOOL_SCHEMAS = [
     # --- Notifications & timers ---
     {"type": "function", "function": {
         "name": "show_notification",
-        "description": "Show a Windows toast notification.",
+        "description": "Show a desktop notification.",
         "parameters": {"type": "object", "properties": {
             "title": {"type": "string"},
             "message": {"type": "string"}}, "required": ["title", "message"]}}},
@@ -265,7 +265,7 @@ TOOL_SCHEMAS = [
     # --- Subagent ---
     {"type": "function", "function": {
         "name": "delegate_task",
-        "description": "Delegate a subtask to a fast local AI model (Ollama). Use for: summarizing text, reformatting data, writing boilerplate, simple Q&A. Provide the task and optional context.",
+        "description": "Delegate a subtask to the active LLM for parallel/cheaper processing. Use for: summarizing text, reformatting data, writing boilerplate, simple Q&A. Provide the task and optional context.",
         "parameters": {"type": "object", "properties": {
             "task": {"type": "string", "description": "What the subagent should do"},
             "context": {"type": "string", "description": "Optional context/data for the subtask"}},

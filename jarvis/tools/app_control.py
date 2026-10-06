@@ -1,82 +1,85 @@
-import subprocess
+"""App control — Linux/Ubuntu port."""
 import os
+import shutil
+import subprocess
 import webbrowser
 
-_USER = os.environ.get("USERNAME", "User")
-
+# Map friendly names to Linux executables/commands.
 APP_MAP = {
     # Browsers
-    "chrome": r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-    "google chrome": r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-    "firefox": r"C:\Program Files\Mozilla Firefox\firefox.exe",
-    "edge": r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-    "brave": r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+    "chrome": "google-chrome",
+    "google chrome": "google-chrome",
+    "chromium": "chromium",
+    "chromium-browser": "chromium-browser",
+    "firefox": "firefox",
+    "edge": "microsoft-edge",
+    "brave": "brave-browser",
     # Communication
-    "discord": rf"C:\Users\{_USER}\AppData\Local\Discord\Update.exe",
-    "telegram": rf"C:\Users\{_USER}\AppData\Roaming\Telegram Desktop\Telegram.exe",
-    "slack": rf"C:\Users\{_USER}\AppData\Local\slack\slack.exe",
-    "teams": rf"C:\Users\{_USER}\AppData\Local\Microsoft\Teams\current\Teams.exe",
-    "zoom": rf"C:\Users\{_USER}\AppData\Roaming\Zoom\bin\Zoom.exe",
+    "discord": "discord",
+    "telegram": "telegram-desktop",
+    "slack": "slack",
+    "teams": "teams",
+    "zoom": "zoom",
     # Dev tools
     "vscode": "code",
     "vs code": "code",
-    "terminal": "wt.exe",
-    "cmd": "cmd.exe",
-    "powershell": "powershell.exe",
-    "git bash": rf"C:\Program Files\Git\git-bash.exe",
+    "code": "code",
+    "terminal": "gnome-terminal",
+    "gnome terminal": "gnome-terminal",
+    "konsole": "konsole",
+    "alacritty": "alacritty",
+    "kitty": "kitty",
     # Media
-    "spotify": rf"C:\Users\{_USER}\AppData\Roaming\Spotify\Spotify.exe",
-    "vlc": r"C:\Program Files\VideoLAN\VLC\vlc.exe",
+    "spotify": "spotify",
+    "vlc": "vlc",
+    "mpv": "mpv",
     # Gaming
-    "steam": r"C:\Program Files (x86)\Steam\steam.exe",
-    "epic games": r"C:\Program Files (x86)\Epic Games\Launcher\Portal\Binaries\Win64\EpicGamesLauncher.exe",
+    "steam": "steam",
     # Productivity
-    "notepad": "notepad.exe",
-    "notepad++": r"C:\Program Files\Notepad++\notepad++.exe",
-    "word": r"C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE",
-    "excel": r"C:\Program Files\Microsoft Office\root\Office16\EXCEL.EXE",
-    "powerpoint": r"C:\Program Files\Microsoft Office\root\Office16\POWERPNT.EXE",
-    "paint": "mspaint.exe",
-    "snipping tool": "SnippingTool.exe",
+    "notepad": "gedit",
+    "gedit": "gedit",
+    "text editor": "gedit",
+    "calculator": "gnome-calculator",
+    "gnome-calculator": "gnome-calculator",
+    "files": "nautilus",
+    "file manager": "nautilus",
+    "nautilus": "nautilus",
     # System
-    "explorer": "explorer.exe",
-    "file explorer": "explorer.exe",
-    "task manager": "taskmgr.exe",
-    "calculator": "calc.exe",
-    "settings": "ms-settings:",
-    "control panel": "control.exe",
+    "settings": "gnome-control-center",
+    "control center": "gnome-control-center",
 }
 
-_FALLBACKS = {
-    "chrome": r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-    "google chrome": r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-    "edge": r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-}
+# If a friendly name maps to a missing binary but the user typed a literal
+# command, try it directly.
 
-# Discord needs --processStart flag
 _ARGS = {
-    "discord": ["--processStart", "Discord.exe"],
+    "discord": [],
 }
 
 
 def open_app(name: str) -> str:
-    """Open an application by friendly name."""
+    """Open an application by friendly name or binary name."""
     key = name.lower().strip()
     exe = APP_MAP.get(key, key)
-
-    # Build arg list — no shell=True
-    args = [exe] + _ARGS.get(key, [])
+    # Try the mapped/typed binary if on PATH
+    if shutil.which(exe):
+        try:
+            subprocess.Popen([exe], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return f"Opening {name}."
+        except Exception as e:
+            return f"Could not open {name}: {e}"
+    # Fallback: use gio/gtk-launch via .desktop name
+    desktop = key.replace(" ", "-")
     try:
-        subprocess.Popen(args)
+        r = subprocess.run(["gtk-launch", desktop], capture_output=True, timeout=5)
+        if r.returncode == 0:
+            return f"Opening {name}."
+    except Exception:
+        pass
+    try:
+        subprocess.Popen(["xdg-open", key], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return f"Opening {name}."
     except Exception as e:
-        fallback = _FALLBACKS.get(key)
-        if fallback:
-            try:
-                subprocess.Popen([fallback] + _ARGS.get(key, []))
-                return f"Opening {name}."
-            except Exception:
-                pass
         return f"Could not open {name}: {e}"
 
 
@@ -90,13 +93,11 @@ def open_url(url: str) -> str:
 
 def kill_process(name: str) -> str:
     """Kill a process by name (e.g. 'spotify', 'chrome')."""
-    # Sanitize: only allow alphanumeric, dots, spaces, hyphens
     safe = "".join(c for c in name if c.isalnum() or c in ".-_ ")
     result = subprocess.run(
-        ["taskkill", "/IM", f"{safe}.exe", "/F"],
+        ["pkill", "-f", safe],
         capture_output=True, text=True,
     )
-    output = (result.stdout + result.stderr).strip()
     if result.returncode == 0:
         return f"Killed {name}."
-    return f"Could not kill {name}: {output}"
+    return f"Could not kill {name} (not running or no permission)."

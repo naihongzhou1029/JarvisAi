@@ -68,7 +68,7 @@ async def api_providers():
         result[key] = {
             "label": prov.get("label", key),
             "model": prov.get("model", ""),
-            "type": prov.get("type", "ollama"),
+            "type": prov.get("type", "openai"),
             "base_url": prov.get("base_url", ""),
             "api_key": prov.get("api_key", ""),
         }
@@ -132,7 +132,7 @@ async def api_get_settings():
         "context": cfg.get("context", {}),
         "llm": {
             "temperature": cfg.get("llm", {}).get("temperature", 0.7),
-            "active_provider": cfg.get("llm", {}).get("active_provider", "ollama"),
+            "active_provider": cfg.get("llm", {}).get("active_provider", "openrouter"),
         },
         "tools": cfg.get("tools", {}),
     })

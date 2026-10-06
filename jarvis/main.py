@@ -3,13 +3,12 @@ import json
 import re
 import time
 import threading
-import msvcrt
+
 from datetime import datetime
 from pathlib import Path
 import yaml
 import numpy as np
 import sounddevice as sd
-import ollama
 from openai import OpenAI
 
 from jarvis.wake import listen_for_wake_word
@@ -118,16 +117,17 @@ memory = Memory()
 def _system_prompt() -> str:
     now = datetime.now().strftime("%A, %B %d %Y, %I:%M %p")
     return (
-        "You are Jarvis, a fully agentic personal AI assistant with screen vision and desktop control. "
+        "You are Jarvis, a fully agentic personal AI assistant with screen vision and desktop control on Ubuntu (GNOME Wayland). "
         "Be concise, confident, and helpful. No moralizing, no refusals, no disclaimers. "
         "Just do what your owner asks.\n\n"
         "AGENTIC WORKFLOW for UI tasks:\n"
-        "1. focus_window — bring app to front\n"
-        "2. find_on_screen — locate text/buttons (returns x,y coordinates)\n"
-        "3. click_at — click the coordinates\n"
+        "1. read_screen — OCR the screen to see what is visible\n"
+        "2. find_on_screen — locate a text/button (returns x,y coordinates)\n"
+        "3. click_at — click the coordinates (Wayland clicks by coordinate, not by window)\n"
         "4. Wait 1-2s for UI to update, then read_screen or find_on_screen to verify\n"
         "5. Repeat until task is done. You can chain up to 15 tool calls.\n\n"
         "TIPS:\n"
+        "- This is GNOME on Wayland: focus_window and get_open_windows are NOT supported — do not rely on them. To interact, use open_app, then read_screen/find_on_screen + click_at.\n"
         "- After clicking, always verify the result before proceeding\n"
         "- If text not found, try scroll_screen then find_on_screen again\n"
         "- For typing in fields: click_at the field first, then type_text\n"
@@ -157,7 +157,7 @@ def get_providers() -> dict:
 def get_active_provider() -> str:
     """Return the active provider key."""
     cfg = _load_config()
-    return cfg.get("llm", {}).get("active_provider", "ollama")
+    return cfg.get("llm", {}).get("active_provider", "openrouter")
 
 
 def set_active_provider(provider_key: str) -> bool:
@@ -189,7 +189,7 @@ def _strip_think(text: str) -> str:
 
 
 def _parse_tool_args(raw) -> dict:
-    """OpenAI returns JSON string, Ollama returns dict. Handle both."""
+    """OpenAI-compatible providers return a JSON string; be defensive if a dict arrives."""
     if isinstance(raw, str):
         return json.loads(raw)
     return raw
@@ -199,7 +199,8 @@ def _call_openai_provider(provider_cfg: dict, temperature: float, full_messages:
     """Call any OpenAI-compatible provider (LM Studio, NVIDIA NIM, etc.)."""
     model = provider_cfg["model"]
     base_url = provider_cfg["base_url"]
-    api_key = provider_cfg.get("api_key", "lm-studio")
+    from jarvis.llm import _resolve_api_key
+    api_key = _resolve_api_key(provider_cfg)
     client = _get_openai_client(base_url, api_key)
     tool_count = 0
     for _ in range(_MAX_TOOL_LOOPS):
@@ -233,49 +234,19 @@ def _call_openai_provider(provider_cfg: dict, temperature: float, full_messages:
     return "Done."
 
 
-def _call_ollama_provider(provider_cfg: dict, temperature: float, full_messages: list[dict]) -> str:
-    """Call Ollama provider."""
-    model = provider_cfg["model"]
-    tool_count = 0
-    for _ in range(_MAX_TOOL_LOOPS):
-        _check_abort()
-        response = ollama.chat(model=model, messages=full_messages, tools=TOOL_SCHEMAS)
-        if response.message.tool_calls:
-            full_messages.append(response.message.model_dump())
-            for tc in response.message.tool_calls:
-                _check_abort()
-                args = _parse_tool_args(tc.function.arguments)
-                tool_count += 1
-                _broadcast({"type": "tool", "name": tc.function.name, "args": args})
-                if tool_count == 4:
-                    _speak_if_unmuted("Working on it.")
-                result = _exec_tool_with_retry(tc.function.name, args)
-                print(f"[Tool: {tc.function.name}] {result[:120]}")
-                _broadcast({"type": "tool_result", "name": tc.function.name, "result": result[:200]})
-                full_messages.append({
-                    "role": "tool",
-                    "content": result,
-                    "name": tc.function.name,
-                })
-        else:
-            return _strip_think(response.message.content or "Done.")
-    return "Done."
-
-
 def _call_llm(full_messages: list[dict]) -> str:
     """Route to the active provider."""
     cfg = _load_config()
     llm_cfg = cfg["llm"]
     temperature = llm_cfg.get("temperature", 0.7)
-    active = llm_cfg.get("active_provider", "ollama")
+    active = llm_cfg.get("active_provider", "openrouter")
     providers = llm_cfg.get("providers", {})
     provider = providers.get(active, {})
-    ptype = provider.get("type", "ollama")
+    ptype = provider.get("type", "openai")
 
     if ptype == "openai":
         return _call_openai_provider(provider, temperature, full_messages)
-    else:
-        return _call_ollama_provider(provider, temperature, full_messages)
+    raise RuntimeError(f"Unsupported provider type '{ptype}'. Only OpenAI-compatible providers are supported.")
 
 
 def _exec_tool_with_retry(name: str, args: dict) -> str:
@@ -368,10 +339,8 @@ def _process_request(user_text: str) -> str:
     except _Aborted:
         raise
     except Exception as e:
-        print(f"[WARN] Primary provider failed ({e}), trying Ollama fallback")
-        cfg = _load_config()
-        ollama_provider = cfg["llm"]["providers"].get("ollama", {"model": "qwen3:8b"})
-        response_text = _call_ollama_provider(ollama_provider, cfg["llm"].get("temperature", 0.7), full_messages)
+        print(f"[ERROR] LLM call failed: {e}")
+        response_text = f"Sorry, I ran into a problem: {e}"
 
     context.add("user", user_text)
     context.add("assistant", response_text)
@@ -383,26 +352,28 @@ def _process_request(user_text: str) -> str:
 
 
 def _keyboard_listener() -> None:
-    """Background thread: Esc = abort, F2 = type command, INSERT = mute/unmute."""
+    """Background thread: read commands from stdin (no Windows msvcrt).
+
+    Supports simple line input: 'stop' → abort, 'mute' → toggle mute,
+    otherwise treats the line as a typed command. Also attempts to catch a
+    lone Escape key on a real terminal."""
+    import sys
     while True:
         try:
-            if msvcrt.kbhit():
-                key = msvcrt.getch()
-                # Escape key
-                if key == b'\x1b':
-                    abort_all()
-                    print("\n[Jarvis] Stopped. (Esc)")
-                # Extended keys: F2 = 0x00+0x3c, INSERT = 0xe0+0x52
-                elif key in (b'\x00', b'\xe0'):
-                    special = msvcrt.getch()
-                    if special == b'<':  # F2
-                        print("\n[Type your command] ", end="", flush=True)
-                        cmd = input()
-                        if cmd.strip():
-                            _handle_typed_command(cmd.strip())
-                    elif special == b'R':  # INSERT
-                        toggle_mute()
-            time.sleep(0.05)
+            line = sys.stdin.readline()
+            if not line:
+                return
+            cmd = line.strip()
+            if not cmd:
+                continue
+            low = cmd.lower()
+            if low in ("stop", "abort", "cancel"):
+                abort_all()
+                print("\n[Jarvis] Stopped. (stdin)")
+            elif low in ("mute", "unmute"):
+                toggle_mute()
+            else:
+                _handle_typed_command(cmd)
         except Exception:
             time.sleep(0.1)
 
