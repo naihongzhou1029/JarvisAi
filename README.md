@@ -70,6 +70,8 @@ Web UI opens at **http://localhost:7860**. Say **"Hey Jarvis"**, or type a comma
 - **Screen vision** — reads your screen via OCR, finds UI elements by text, clicks buttons by coordinates
 - **Multiple LLM providers** — OpenRouter (Auto Router, default here), any OpenAI-compatible API (LM Studio, vLLM, Groq, …)
 - **Iron Man HUD web UI** — real-time chat, tool execution logs, provider management, settings, quick actions
+- **System tray icon** — an orb in the top bar while Jarvis is online (native `StatusNotifierItem` over D-Bus, works on GNOME Wayland); turns orange while listening. Toggle with `ui.tray` in `config.yaml`
+- **Siri-style listening overlay** — a small animated waveform at the top-right while Jarvis accepts your voice prompt; closes automatically when recording stops. Toggle with `ui.listening_overlay` in `config.yaml`
 - **Persistent memory** — remembers facts across sessions using SQLite + ChromaDB (offline lexical embeddings)
 - **Context management** — sliding window with auto-summarization to stay within token limits
 - **One-click install** — `install.sh` sets up everything, `start.sh` launches (`setup_system.sh` for the sudo/`uinput` step)
@@ -295,6 +297,8 @@ jarvis/
 │
 ├── jarvis/
 │   ├── main.py          # Core orchestrator — pipeline, abort, events
+│   ├── tray.py          # System tray icon (StatusNotifierItem over D-Bus)
+│   ├── listening_overlay.py  # Siri-style top-right listening animation (Tkinter)
 │   ├── wake.py          # Wake word detection (openWakeWord + sounddevice)
 │   ├── stt.py           # Speech-to-text (faster-whisper)
 │   ├── tts.py           # Text-to-speech (Kokoro)
@@ -330,6 +334,8 @@ jarvis/
 | STT recording hangs | Mic conflict resolved — wake word mic auto-pauses during recording. |
 | OpenRouter 401 / connection error | Ensure `OPENROUTER_API_KEY` is set (`~/.config/ubuntu-siri/env`) and `base_url` is `https://openrouter.ai/api/v1`. |
 | Web UI not updating | Open browser console (F12) — check for `[WS]` log messages. Refresh page. |
+| Tray icon missing | Needs the AppIndicator extension (`ubuntu-appindicators@ubuntu.com`, on by default on Ubuntu). Jarvis auto-retries every 3 s until the tray host is up — if the extension was disabled mid-session, re-enable it (`gnome-extensions enable ubuntu-appindicators@ubuntu.com`) and **log out / back in**, then the icon appears without restarting Jarvis. Headless/SSH sessions show no tray — expected. Check `/tmp/jarvis.log` for `[Tray]` lines. |
+| Listening overlay missing | Needs a display and Tkinter (in `.venv`). Disable with `ui.listening_overlay: false` if unwanted. |
 
 ---
 

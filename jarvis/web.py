@@ -135,6 +135,7 @@ async def api_get_settings():
             "active_provider": cfg.get("llm", {}).get("active_provider", "openrouter"),
         },
         "tools": cfg.get("tools", {}),
+        "ui": cfg.get("ui", {}),
     })
 
 
@@ -158,6 +159,8 @@ async def api_update_settings(request: Request):
             cfg.setdefault("llm", {})["temperature"] = body["llm"]["temperature"]
     if "tools" in body:
         cfg.setdefault("tools", {}).update(body["tools"])
+    if "ui" in body:
+        cfg.setdefault("ui", {}).update(body["ui"])
 
     _save_config(cfg)
     return JSONResponse({"status": "ok"})

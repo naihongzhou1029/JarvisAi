@@ -25,12 +25,15 @@ if [ -f "$PIDFILE" ]; then
         echo "[stop] Stale pid file (process $PID not running), cleaning up."
     fi
     rm -f "$PIDFILE"
+    # Clean up the tray helper if it outlived the main process.
+    pkill -f "zenity --notification" 2>/dev/null || true
     exit 0
 fi
 
 # No pid file — fall back to matching the process.
 if pgrep -f "jarvis\.main" >/dev/null 2>&1; then
     pkill -f "jarvis\.main"
+    pkill -f "zenity --notification" 2>/dev/null || true
     echo "[stop] Jarvis stopped (matched by process name)."
 else
     echo "[stop] Jarvis is not running."

@@ -32,3 +32,6 @@ tools:
   - ~/Documents
   - ~/Desktop
   code_timeout: 10
+ui:
+  tray: true                # system tray icon while Jarvis is online
+  listening_overlay: true   # Siri-style animation (top-right) while listening

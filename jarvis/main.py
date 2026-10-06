@@ -292,11 +292,18 @@ def _handle_wake_inner() -> None:
 
     # Pause wake word mic so STT can use the hardware exclusively
     from jarvis.wake import pause_wake_mic, resume_wake_mic
+    from jarvis import listening_overlay
+    from jarvis import tray as tray_module
+    listening_overlay.show()  # Siri-style animation, top-right
+    tray_module.set_listening(True)
     pause_wake_mic()
     time.sleep(0.15)  # Give pyaudio time to release the mic
     try:
         audio = record_until_silence()
     finally:
+        # Recording over (speech done, timeout, or abort) — close animation.
+        listening_overlay.hide()
+        tray_module.set_listening(False)
         resume_wake_mic()  # Always resume wake word detection
     _check_abort()
     print(f"[Jarvis] Recorded {len(audio)/16000:.1f}s of audio, transcribing...")
@@ -396,7 +403,12 @@ def _handle_typed_command(text: str) -> None:
 
 
 def main() -> None:
+    import faulthandler
+    faulthandler.enable()  # dump traceback on segfault into /tmp/jarvis.log
     from jarvis.web import start_web_background
+    from jarvis import tray as tray_module
+    from jarvis import listening_overlay
+    import signal
 
     print("[Jarvis] Starting up...")
     print("[Jarvis] Keys: Esc = stop | F2 = type | INSERT = mute/unmute")
@@ -405,6 +417,20 @@ def main() -> None:
     # browser is NOT opened automatically.
     start_web_background(port=7860)
     print("[Jarvis] Web UI (optional): http://localhost:7860")
+
+    # System tray icon: visible for as long as Jarvis is online.
+    tray_module.ensure_online()
+
+    def _graceful_exit(signum, frame) -> None:
+        tray_module.shutdown()
+        listening_overlay.hide()
+        raise SystemExit(0)
+
+    for _sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(_sig, _graceful_exit)
+        except Exception:
+            pass
 
     threading.Thread(target=_keyboard_listener, daemon=True).start()
 
